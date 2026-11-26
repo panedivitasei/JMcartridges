@@ -12,9 +12,9 @@ JMcartridges gives your non-Steam games descriptions, artwork, community content
 
 | Source | Provides | Requires |
 | --- | --- | --- |
-| Steam | Game info, artwork, Community content | Nothing |
-| TheGamesDB (Recommended) | Game info, artwork, Community content | API key |
-| IGDB | Game info, artwork, Community content | Twitch client ID and secret |
+| Steam | Game info, artwork, community content | Nothing |
+| TheGamesDB (Recommended) | Game info, artwork, community content | API key |
+| IGDB | Game info, artwork, community content | Twitch client ID and secret |
 | SteamGridDB | Artwork | API key |
 | RetroAchievements | Achievements | Username and Web API key |
 
