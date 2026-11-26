@@ -2,6 +2,12 @@
 
 A simpler alternative to SteamCartridges
 
-![The JMcartridges window](docs/window.png)
+![JMcartridges window](docs/window.png)
 
-![A non-Steam game's page in Steam](docs/game-page.jpg)
+![non-Steam game](docs/game-page.jpg)
+
+## Install
+
+Run `JMcartridges.Installer.exe` from the [latest release](../../releases/latest).
+
+Or extract `jmcartridges-<version>.zip` into `<Steam>/millennium/plugins/` and enable JMcartridges in Millennium.
