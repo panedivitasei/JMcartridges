@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/SteamClientHomebrew/Millennium/main/src/system/plugin-schema.json",
+  "name": "jmcartridges",
+  "common_name": "JMcartridges",
+  "description": "Game info and artwork for non-Steam games.",
+  "version": "0.1.0",
+  "useBackend": true,
+  "backendType": "lua"
+}
