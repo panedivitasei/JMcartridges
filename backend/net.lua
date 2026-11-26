@@ -160,21 +160,53 @@ local function binary_windows(url)
   return { status = status, body = table.concat(parts) }
 end
 
--- Elsewhere: a download through curl into a temporary file.
-local function binary_curl(url)
-  if not url:match("^[%w%-%._~:/%?#%[%]@!%$&%(%)%*%+,;=%%]+$") then return nil, "bad-link" end
-  local path = os.tmpname()
-  local cmd = string.format("curl -s -L --max-redirs 5 --max-time %d --max-filesize %d -o '%s' -w '%%{http_code}' '%s' 2>/dev/null", M.TIMEOUT * 2, M.MAX_BYTES, path, url)
+-- Steam puts its own bundled libraries first for every program it starts, and the system's download tools do not load with them.
+local CLEAN = "env -u LD_LIBRARY_PATH -u LD_PRELOAD "
+
+-- What a command prints, or "".
+local function run(cmd)
   local p = io.popen(cmd, "r")
-  local status = p and tonumber(p:read("*a")) or 0
+  local out = p and p:read("*a") or ""
   if p then p:close() end
+  return out
+end
+
+local function read_file(path)
   local f = io.open(path, "rb")
   local body = f and f:read("*a")
   if f then f:close() end
+  return body
+end
+
+-- Elsewhere: a download into a temporary file by curl, or by wget where curl does not work.
+local function binary_curl(url)
+  if not url:match("^[%w%-%._~:/%?#%[%]@!%$&%(%)%*%+,;=%%]+$") then return nil, "bad-link" end
+  local path = os.tmpname()
+  local errors = path .. ".err"
+  local tools = {
+    string.format("%scurl -sS -L --max-redirs 5 --max-time %d --max-filesize %d -o '%s' -w '%%{http_code}' '%s' 2>'%s'", CLEAN, M.TIMEOUT * 2, M.MAX_BYTES, path, url, errors),
+    string.format("%swget -nv --tries=1 --max-redirect=5 --timeout=%d -O '%s' '%s' 2>'%s' && echo 200", CLEAN, M.TIMEOUT * 2, path, url, errors),
+  }
+  local status, why = 0, nil
+  for _, cmd in ipairs(tools) do
+    status = tonumber(run(cmd):match("%d+")) or 0
+    if status > 0 then break end
+    -- The first tool's own words are kept for the log: they say why a download cannot be made on this system.
+    why = why or (read_file(errors) or ""):match("[^\r\n]+")
+  end
+  local body = read_file(path)
   os.remove(path)
-  if not body or status == 0 then return nil, "not-reached" end
+  os.remove(errors)
+  if not body or status == 0 then
+    log.line("net", "download tool: " .. tostring(why or "no answer"):sub(1, 200))
+    return nil, "not-reached"
+  end
+  if #body > M.MAX_BYTES then return nil, "too-large" end
   return { status = status, body = body }
 end
+
+-- For the tests, which run it through a real shell.
+M.binary_curl = binary_curl
 
 -- A file's bytes: { status, body } or nil, reason.
 function M.binary(source, url)
