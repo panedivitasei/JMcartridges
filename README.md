@@ -2,7 +2,7 @@
 
 A simpler alternative to [SteamCartridges](https://github.com/gunCannoli/steam-cartridges)
 
-JMcartridges gives your non-Steam games descriptions, artwork, community content and achievements in Steam, with the aim of making these look consistent with purchased Steam games. JMcartridges slightly changes the look of your purchased Steam game details for conformity with non-Steam games. JMcartridges also allows you to add a purchased Steam game to the plugin, especially useful for editing descriptions or giving life to a now delisted Steam game. 
+JMcartridges gives your non-Steam games descriptions, artwork, community content and achievements in Steam, with the aim of making these look consistent with purchased Steam games. The plugin slightly changes the look of your purchased Steam game details for conformity with non-Steam games. It also allows you to add a purchased Steam game to the plugin, especially useful for editing descriptions or giving life to a now delisted Steam game. 
 
 ![JMcartridges window](docs/window.png)
 
