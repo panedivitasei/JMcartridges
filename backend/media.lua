@@ -32,25 +32,40 @@ end
 
 -- Is the source one whose media the user wants on the pages.
 function M.wanted(id)
-  return sources.MATCHABLE[id] == true and state.prefs().media_off[id] ~= true
+  return sources.wants(id, "media")
 end
 
 function M.set_source(id, on)
-  if not sources.MATCHABLE[id] then return end
-  local off = state.prefs().media_off
-  off[id] = (not on) and true or nil
-  state.set_prefs({ media_off = off })
-  log.line("media", id .. (on and " on" or " off"))
+  sources.set_part(id, "media", on)
 end
 
--- The sources asked for a game's media, in the user's order.
-local function asked()
+-- The sources that give media now, in the user's order.
+local function giving()
   local out = {}
   for _, id in ipairs(sources.order()) do
     local src = sources.get(id)
-    if M.wanted(id) and sources.in_use(id) and type(src.media) == "function" then out[#out + 1] = id end
+    if sources.gives(id, "media") and type(src.media) == "function" then out[#out + 1] = id end
   end
   return out
+end
+
+-- The sources asked for a game's media, and for a purchased game how Steam's own feed joins them.
+-- A purchased game already has Steam's community feed, which stands for the Steam source: "first" leaves the page to it,
+-- "after" puts the sources above Steam before it, "off" shows the plugin's sources alone.
+local function plan(appid)
+  local rec = state.peek(appid)
+  local list = giving()
+  if not (rec and type(rec.steam) == "table") then return list, nil end
+  local ask, native = {}, "off"
+  for _, id in ipairs(list) do
+    if id == "steam" then
+      native = #ask == 0 and "first" or "after"
+      break
+    end
+    ask[#ask + 1] = id
+  end
+  if native == "first" then ask = {} end
+  return ask, native
 end
 
 local function match_of(appid)
@@ -58,9 +73,10 @@ local function match_of(appid)
   return rec and rec.match or nil
 end
 
--- What a kept answer belongs to: the game's match and the sources asked.
-local function mark(match)
-  return match.source .. ":" .. tostring(match.id) .. "|" .. table.concat(asked(), ",")
+-- What a kept answer belongs to: the game's match, the sources asked, and how Steam's own feed joins.
+local function mark(appid, match)
+  local ask, native = plan(appid)
+  return match.source .. ":" .. tostring(match.id) .. "|" .. table.concat(ask, ",") .. (native and ("|" .. native) or "")
 end
 
 -- One item in the shape that is kept and sent; nil for anything that cannot be shown.
@@ -99,7 +115,7 @@ end
 local function kept(appid)
   local match = match_of(appid)
   local entry = all()[state.key(appid)]
-  if not match or type(entry) ~= "table" or entry.match ~= mark(match) then return nil end
+  if not match or type(entry) ~= "table" or entry.match ~= mark(appid, match) then return nil end
   return entry
 end
 
@@ -107,10 +123,13 @@ end
 function M.get(appid)
   local match = match_of(appid)
   if not match then return { items = {} } end
+  local ask, native = plan(appid)
+  -- Steam's own feed comes first for this purchased game: nothing is asked and its page is left alone.
+  if native == "first" then return { items = {}, native = native } end
   local entry = kept(appid)
-  if entry and now() - (tonumber(entry.at) or 0) < M.KEEP_SECONDS then return { items = entry.items or {} } end
+  if entry and now() - (tonumber(entry.at) or 0) < M.KEEP_SECONDS then return { items = entry.items or {}, native = native } end
   local by_kind, failed, counts = { video = {}, artwork = {}, screenshot = {} }, nil, {}
-  for _, id in ipairs(asked()) do
+  for _, id in ipairs(ask) do
     local ok, game, why = pcall(id_at, id, match)
     local found, err
     if ok and game then
@@ -140,10 +159,10 @@ function M.get(appid)
   end
   log.line("media", string.format("%s: %d item(s) (%s)%s", state.key(appid), #items, table.concat(counts, ", "), failed and (", " .. failed) or ""))
   -- An answer with a source missing is shown but not kept, so the source is asked again.
-  if failed then return { items = items, error = failed } end
-  all()[state.key(appid)] = { match = mark(match), at = now(), items = items }
+  if failed then return { items = items, error = failed, native = native } end
+  all()[state.key(appid)] = { match = mark(appid, match), at = now(), items = items }
   files.save(FILE, all())
-  return { items = items }
+  return { items = items, native = native }
 end
 
 -- Keeps the sizes the page measured, one { width, height } per kept item in order, for the pictures that had none.
@@ -169,7 +188,9 @@ function M.all_kept()
   for key in pairs(all()) do
     local appid = state.appid(key)
     local entry = appid and kept(appid)
-    if entry and type(entry.items) == "table" and #entry.items > 0 then out[key] = entry.items end
+    -- A purchased game's items are asked for when its page is shown, with how Steam's own feed joins them.
+    local purchased = appid and state.steam_appid(appid) ~= nil
+    if entry and not purchased and type(entry.items) == "table" and #entry.items > 0 then out[key] = entry.items end
   end
   return out
 end

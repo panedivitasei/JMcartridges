@@ -4,10 +4,10 @@ import { definePlugin, IconsModule } from "@steambrew/client";
 import { call } from "./backend";
 import { mainWindow, screenSize, showDialog } from "./steam/dialog";
 import { clearAchievements, hasAchievements, installAchievements, readItems, setAchievements } from "./steam/achievements";
-import { forgetMedia, hasFeed, installCommunity, knows, setMedia, showMedia, sizesKnown, type MediaItem } from "./steam/community";
+import { forgetMedia, hasFeed, installCommunity, knows, setMedia, showMedia, sizesKnown, type MediaItem, type Native } from "./steam/community";
 import { SOURCE_ICONS } from "./steam/source-icons";
 import { addSection, installGameInfo, onGameShown, redrawPages, setInfo } from "./steam/game-info";
-import { accountId, clearLogoPosition, ensureLogoPosition, listGames, steamApps } from "./steam/library";
+import { accountId, clearLogoPosition, ensureLogoPosition, listGames, listSteamGames, steamApps, steamArt } from "./steam/library";
 import { addPropertiesPage } from "./steam/properties";
 import { CartridgePage, setCartridgeHost } from "./window/cartridge";
 import { createHost } from "./window/host";
@@ -39,6 +39,8 @@ const host = createHost({
         return call(name, payload);
     },
     games: listGames,
+    steamGames: listSteamGames,
+    steamArt,
     steamApps,
     logo: { ensure: ensureLogoPosition, clear: clearLogoPosition },
     // A game's match changed with its info: what its page showed of the old match is forgotten.
@@ -51,7 +53,11 @@ const host = createHost({
         descLimit = limit;
         redrawPages();
     },
-    mediaChanged: forgetMedia,
+    // The sources that feed the pages changed: the game on screen is asked again at once, the others when their page is shown.
+    mediaChanged: () => {
+        forgetMedia();
+        if (mediaGame) void askMedia(mediaGame);
+    },
     achievementsChanged: () => void reloadAchievements(),
     log,
 });
@@ -103,17 +109,28 @@ async function startCommunity(): Promise<void> {
     }
     // A game's media is asked for the first time its page is shown, and kept from then on.
     onGameShown((appid) => {
-        void (async () => {
-            log(`community: page ${appid}, media ${knows(appid) ? "known" : "asked"}`);
-            if (!knows(appid)) {
-                await tellAccount();
-                const got = await call<{ items?: unknown }>("JmMedia", { appid }).catch(() => undefined);
-                if (!got) return;
-                setMedia(appid, Array.isArray(got.items) ? (got.items as MediaItem[]) : []);
-            }
-            await showMedia(appid);
-        })();
+        mediaGame = appid;
+        void askMedia(appid);
     });
+}
+
+/** The game whose page was shown last, for its media. */
+let mediaGame = 0;
+
+/** Gets a game's media unless it is known, and makes its cards. */
+async function askMedia(appid: number): Promise<void> {
+    try {
+        log(`community: page ${appid}, media ${knows(appid) ? "known" : "asked"}`);
+        if (!knows(appid)) {
+            await tellAccount();
+            const got = await call<{ items?: unknown; native?: Native }>("JmMedia", { appid }).catch(() => undefined);
+            if (!got) return;
+            setMedia(appid, Array.isArray(got.items) ? (got.items as MediaItem[]) : [], got.native);
+        }
+        await showMedia(appid);
+    } catch (err) {
+        log(`community: ${String((err as Error)?.message ?? err).slice(0, 120)}`);
+    }
 }
 
 /** The game whose page was shown last. */
@@ -155,6 +172,8 @@ async function startAchievements(): Promise<void> {
     installAchievements({ report: (where, err) => log(`${where}: ${String((err as Error)?.message ?? err).slice(0, 120)}`), note: log });
     await loadAchievements();
     onGameShown((appid) => {
+        // A purchased game has Steam's own achievements.
+        if (appid < 0x80000000) return;
         shownGame = appid;
         void askAchievements(appid);
     });

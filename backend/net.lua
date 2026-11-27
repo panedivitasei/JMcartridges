@@ -178,8 +178,84 @@ local function read_file(path)
   return body
 end
 
--- Elsewhere: a download into a temporary file by curl, or by wget where curl does not work.
-local function binary_curl(url)
+local curl_library -- nil until looked for, false when there is none
+
+-- libcurl, which Steam and Millennium bring along, or nil.
+local function libcurl()
+  if curl_library ~= nil then return curl_library or nil end
+  curl_library = false
+  local ok_ffi, ffi = pcall(require, "ffi")
+  if not ok_ffi then return nil end
+  pcall(ffi.cdef, [[
+    void* curl_easy_init(void);
+    int curl_easy_setopt(void*, int, ...);
+    int curl_easy_perform(void*);
+    void curl_easy_cleanup(void*);
+    int curl_easy_getinfo(void*, int, ...);
+    const char* curl_easy_strerror(int);
+  ]])
+  pcall(ffi.cdef, [[
+    void* fopen(const char*, const char*);
+    int fclose(void*);
+  ]])
+  for _, name in ipairs({ "libcurl.so.4", "libcurl-gnutls.so.4", "curl" }) do
+    local ok, lib = pcall(ffi.load, name)
+    if ok and pcall(function() return lib.curl_easy_init end) then
+      curl_library = { ffi = ffi, lib = lib }
+      break
+    end
+  end
+  return curl_library or nil
+end
+
+-- Elsewhere, first: libcurl writes the file itself, so no program has to be found and started.
+-- { status, body }, or nil, a reason and the library's own words.
+local function binary_libcurl(url)
+  local found = libcurl()
+  if not found then return nil, "not-reached", "no libcurl" end
+  local ffi, lib = found.ffi, found.lib
+  local path = os.tmpname()
+  local file = ffi.C.fopen(path, "wb")
+  if file == nil then
+    os.remove(path)
+    return nil, "not-reached", "libcurl: no temporary file"
+  end
+  local easy = lib.curl_easy_init()
+  if easy == nil then
+    ffi.C.fclose(file)
+    os.remove(path)
+    return nil, "not-reached", "libcurl: no handle"
+  end
+  local function long(v) return ffi.cast("long", v) end
+  lib.curl_easy_setopt(easy, 10002, url) -- the link
+  lib.curl_easy_setopt(easy, 10001, file) -- where the body is written
+  lib.curl_easy_setopt(easy, 52, long(1)) -- follow redirects
+  lib.curl_easy_setopt(easy, 68, long(5)) -- at most five of them
+  lib.curl_easy_setopt(easy, 181, long(3)) -- http and https only
+  lib.curl_easy_setopt(easy, 182, long(3)) -- for redirects too
+  lib.curl_easy_setopt(easy, 13, long(M.TIMEOUT * 2)) -- seconds in all
+  lib.curl_easy_setopt(easy, 114, long(M.MAX_BYTES)) -- largest file
+  lib.curl_easy_setopt(easy, 99, long(1)) -- no signals in Steam's process
+  lib.curl_easy_setopt(easy, 10018, "jmcartridges/1.0") -- who is asking
+  local code = lib.curl_easy_perform(easy)
+  local status = ffi.new("long[1]")
+  lib.curl_easy_getinfo(easy, 0x200002, status)
+  local said = code ~= 0 and ffi.string(lib.curl_easy_strerror(code)) or nil
+  lib.curl_easy_cleanup(easy)
+  ffi.C.fclose(file)
+  local f = io.open(path, "rb")
+  local body = f and f:read("*a")
+  if f then f:close() end
+  os.remove(path)
+  -- 63 is libcurl's "file larger than allowed".
+  if code == 63 or (body and #body > M.MAX_BYTES) then return nil, "too-large" end
+  if code ~= 0 or not body or tonumber(status[0]) == 0 then return nil, "not-reached", "libcurl: " .. tostring(said or "no answer") end
+  return { status = tonumber(status[0]), body = body }
+end
+
+-- Elsewhere, second: a download into a temporary file by curl, or by wget where curl does not work.
+-- `before` is what libcurl said when it was tried first, for the log.
+local function binary_curl(url, before)
   if not url:match("^[%w%-%._~:/%?#%[%]@!%$&%(%)%*%+,;=%%]+$") then return nil, "bad-link" end
   local path = os.tmpname()
   local errors = path .. ".err"
@@ -198,20 +274,30 @@ local function binary_curl(url)
   os.remove(path)
   os.remove(errors)
   if not body or status == 0 then
-    log.line("net", "download tool: " .. tostring(why or "no answer"):sub(1, 200))
+    log.line("net", "download tool: " .. ((before and (before .. "; ") or "") .. tostring(why or "no answer")):sub(1, 300))
     return nil, "not-reached"
   end
   if #body > M.MAX_BYTES then return nil, "too-large" end
   return { status = status, body = body }
 end
 
--- For the tests, which run it through a real shell.
+-- Elsewhere: libcurl, then the system's own tools.
+local function binary_unix(url)
+  if not url:match("^https?://[%w%-%._~:/%?#%[%]@!%$&%(%)%*%+,;=%%]+$") then return nil, "bad-link" end
+  local ok, res, err, said = pcall(binary_libcurl, url)
+  if ok and (res or err == "too-large") then return res, err end
+  return binary_curl(url, ok and said or ("libcurl: " .. tostring(res)))
+end
+
+-- For the tests, which run them on a real system.
 M.binary_curl = binary_curl
+M.binary_libcurl = binary_libcurl
+M.binary_unix = binary_unix
 
 -- A file's bytes: { status, body } or nil, reason.
 function M.binary(source, url)
   if is_paused(source) then return nil, "paused" end
-  local fetch = M.deps.binary or (package.config:sub(1, 1) == "\\" and binary_windows or binary_curl)
+  local fetch = M.deps.binary or (package.config:sub(1, 1) == "\\" and binary_windows or binary_unix)
   local ok, res, err = pcall(fetch, url)
   if not ok then res, err = nil, res end
   -- A file over the size limit says nothing about the source being down.

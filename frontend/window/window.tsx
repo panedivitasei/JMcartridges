@@ -1,5 +1,6 @@
 // The window: the games on the left, the picked game on the right, Auto Match above them.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { AddGame } from "./addgame.tsx";
 import { GameEditor } from "./editor.tsx";
 import type { Host, Progress } from "./host.ts";
 import { countsOf, visibleRows, type ListFilter, type Row, type State, type Status } from "./model.ts";
@@ -48,6 +49,8 @@ export function JmWindow({ host, startAppid }: { host: Host; startAppid?: number
         page?.classList.add("jm-popup");
         return () => page?.classList.remove("jm-popup");
     }, []);
+
+    const [adding, setAdding] = useState(false);
 
     const rescan = async (): Promise<Row[] | undefined> => {
         const res = await host.scan();
@@ -184,6 +187,11 @@ export function JmWindow({ host, startAppid }: { host: Host; startAppid?: number
                             );
                         })}
                     </div>
+                    <div className="jm-foot">
+                        <Button small disabled={running} onClick={() => setAdding(true)}>
+                            {TEXT.addGame}
+                        </Button>
+                    </div>
                 </Card>
                 {current ? (
                     <Card className="jm-detail" title={current.name} side={STATUS_TEXT[current.status]}>
@@ -205,6 +213,17 @@ export function JmWindow({ host, startAppid }: { host: Host; startAppid?: number
             </div>
             {options && state && <Options host={host} state={state} onState={setState} onClose={() => setOptions(false)} />}
             {sources && state && <Sources host={host} state={state} onState={setState} onClose={() => setSources(false)} />}
+            {adding && (
+                <AddGame
+                    host={host}
+                    onAdded={(appid) => {
+                        setAdding(false);
+                        setSelected(appid);
+                        void rescan();
+                    }}
+                    onClose={() => setAdding(false)}
+                />
+            )}
         </div>
     );
 }

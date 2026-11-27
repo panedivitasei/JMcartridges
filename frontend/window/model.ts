@@ -18,7 +18,13 @@ export interface Row {
     match?: Match;
     /** The user's own Game Info differs from the match's. */
     edited: boolean;
+    /** A purchased Steam game the user added, not a non-Steam game. */
+    steam?: boolean;
 }
+
+/** What a source can give: Game Info, artwork, Community content, achievements. */
+export type Part = "info" | "art" | "media" | "achievements";
+export const PARTS: readonly Part[] = ["info", "art", "media", "achievements"];
 
 export interface Source {
     id: SourceId;
@@ -30,6 +36,8 @@ export interface Source {
     matchable: boolean;
     /** Its trailers, artwork and screenshots go on the games' pages. */
     media: boolean;
+    /** The parts it gives, each wanted or switched off. */
+    parts: Partial<Record<Part, boolean>>;
 }
 
 export interface State {
@@ -149,7 +157,7 @@ export function readRows(value: unknown): Row[] {
         const status = item.status === "ready" || item.status === "none" || item.status === "excluded" ? item.status : "new";
         const m = item.match as Partial<Match> | undefined;
         const match = m && (m.source === "steam" || m.source === "igdb" || m.source === "thegamesdb") && typeof m.id === "number" ? { source: m.source, id: m.id, name: typeof m.name === "string" ? m.name : "" } : undefined;
-        out.push({ appid: item.appid, name: item.name, status, match, edited: item.edited === true });
+        out.push({ appid: item.appid, name: item.name, status, match, edited: item.edited === true, ...(item.steam === true ? { steam: true } : {}) });
     }
     return out;
 }
@@ -159,7 +167,10 @@ export function readState(value: unknown): State {
     const sources: Source[] = [];
     for (const s of arr<Record<string, unknown>>(v.sources)) {
         if (s.id !== "steam" && s.id !== "igdb" && s.id !== "thegamesdb" && s.id !== "steamgriddb" && s.id !== "retroachievements") continue;
-        sources.push({ id: s.id, on: s.on === true, signed: s.signed === true, needs: strings(s.needs), matchable: s.matchable === true, media: s.media === true });
+        const given = (s.parts && typeof s.parts === "object" && !Array.isArray(s.parts) ? s.parts : {}) as Record<string, unknown>;
+        const parts: Partial<Record<Part, boolean>> = {};
+        for (const part of PARTS) if (typeof given[part] === "boolean") parts[part] = given[part] as boolean;
+        sources.push({ id: s.id, on: s.on === true, signed: s.signed === true, needs: strings(s.needs), matchable: s.matchable === true, media: s.media === true, parts });
     }
     const p = v.prefs ?? {};
     const limit = typeof p.desc_limit === "number" && p.desc_limit >= 0 ? Math.floor(p.desc_limit) : 360;
@@ -186,8 +197,6 @@ export function visibleRows(rows: readonly Row[], query: string, filter: ListFil
 }
 
 /** The source that is always first and cannot be moved. */
-export const FIXED_SOURCE: SourceId = "steam";
-
 /** In use: switched on and signed in. */
 export function inUse(source: Source): boolean {
     return source.on && source.signed;
@@ -195,15 +204,14 @@ export function inUse(source: Source): boolean {
 
 /** The sources a game can be matched from now, in the user's order. */
 export function matchSources(state: State | undefined): MatchSource[] {
-    return (state?.sources ?? []).filter((s) => s.matchable && inUse(s)).map((s) => s.id as MatchSource);
+    return (state?.sources ?? []).filter((s) => s.matchable && inUse(s) && s.parts.info !== false).map((s) => s.id as MatchSource);
 }
 
-/** `order` with one source moved to place `to`; Steam is not moved and nothing goes above it. */
+/** `order` with one source moved to place `to`. */
 export function moveSource(order: readonly SourceId[], id: SourceId, to: number): SourceId[] {
     const rest = order.filter((other) => other !== id);
-    if (rest.length === order.length || id === FIXED_SOURCE) return [...order];
-    const first = rest[0] === FIXED_SOURCE ? 1 : 0;
-    rest.splice(Math.max(first, Math.min(rest.length, to)), 0, id);
+    if (rest.length === order.length) return [...order];
+    rest.splice(Math.max(0, Math.min(rest.length, to)), 0, id);
     return rest;
 }
 

@@ -47,7 +47,7 @@ end
 
 -- Signed in to RetroAchievements, the source on, and achievements wanted.
 function M.on()
-  return state.prefs().achievements ~= false and sources.in_use(M.SOURCE)
+  return state.prefs().achievements ~= false and sources.gives(M.SOURCE, "achievements")
 end
 
 -- A console's games, from the copy on disk while it is fresh: the list, or nil and a reason.

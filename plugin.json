@@ -3,7 +3,7 @@
   "name": "jmcartridges",
   "common_name": "JMcartridges",
   "description": "Game info and artwork for non-Steam games.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "useBackend": true,
   "backendType": "lua"
 }

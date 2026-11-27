@@ -3,7 +3,7 @@ local files = require("files")
 
 local M = {}
 
-local PREFS = { theme = "dark", source_order = "", off = {}, media_off = {}, show_info = true, achievements = true, desc_limit = 360, opened = false }
+local PREFS = { theme = "dark", source_order = "", off = {}, media_off = {}, parts_off = {}, show_info = true, achievements = true, desc_limit = 360, opened = false }
 
 local prefs, games
 
@@ -34,27 +34,36 @@ function M.set_prefs(change)
   return now
 end
 
--- A shortcut's appid as an unsigned number, or nil for anything else.
-function M.appid(value)
-  local n = tonumber(value)
-  if not n then return nil end
-  if n < 0 then n = n + 0x100000000 end
-  if n < 0x80000000 or n > 0xFFFFFFFF or n ~= math.floor(n) then return nil end
-  return n
-end
-
-local function key(appid)
-  local n = M.appid(appid)
-  if not n then error("not a non-Steam game: " .. tostring(appid), 0) end
-  return string.format("%d", n)
-end
-
-M.key = key
-
 local function all()
   if not games then games = files.load("games.json", {}) end
   return games
 end
+
+-- A purchased Steam game's appid as a number, or nil for anything else.
+function M.steam_appid(value)
+  local n = tonumber(value)
+  if not n or n ~= math.floor(n) or n < 1 or n >= 0x80000000 then return nil end
+  return n
+end
+
+-- A game's appid as an unsigned number: a non-Steam game's, or a purchased game's once the user added it; nil for anything else.
+function M.appid(value)
+  local n = tonumber(value)
+  if not n then return nil end
+  if n < 0 then n = n + 0x100000000 end
+  if n ~= math.floor(n) or n > 0xFFFFFFFF then return nil end
+  if n >= 0x80000000 then return n end
+  local rec = M.steam_appid(n) and all()[string.format("%d", n)]
+  return type(rec) == "table" and type(rec.steam) == "table" and n or nil
+end
+
+local function key(appid)
+  local n = M.appid(appid)
+  if not n then error("not a game of the plugin's: " .. tostring(appid), 0) end
+  return string.format("%d", n)
+end
+
+M.key = key
 
 -- A game's record, made empty when there is none; call save after changing it.
 function M.game(appid)

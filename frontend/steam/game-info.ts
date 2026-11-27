@@ -254,11 +254,13 @@ function apply(appid: number, rendering = false): boolean {
                 note(`info written for ${appid}`);
             }
         }
-        categories.set(appid, wanted);
+        // A purchased game keeps the player modes Steam lists for it.
+        const shortcut = isShortcut(appid);
+        if (shortcut) categories.set(appid, wanted);
         if (overview) {
             if (!kept.hasOverview) Object.assign(kept, { hasOverview: true, release: overview.rt_original_release_date, steamRelease: overview.rt_steam_release_date });
-            hookCategories(overview);
-            const set = overview.m_setStoreCategories;
+            if (shortcut) hookCategories(overview);
+            const set = shortcut ? overview.m_setStoreCategories : undefined;
             if (set && typeof set.add === "function" && typeof set.delete === "function") {
                 for (const id of OUR_CATEGORIES) if (wanted.has(id)) set.add(id);
                     else set.delete(id);
@@ -357,7 +359,18 @@ function hookProps(component: any, needsInfo: boolean, label: string): void {
                 try {
                     remember(this);
                     const overview = raw?.overview;
-                    if (!overview || !isShortcut(overview.appid)) return raw;
+                    if (!overview) return raw;
+                    if (!isShortcut(overview.appid)) {
+                        // A purchased game the user edits: Steam draws its page as ever, and only the info is kept written.
+                        const held = typeof overview.appid === "number" && infos.has(overview.appid);
+                        if (label === "bar" && shownApp !== overview.appid) {
+                            shownApp = overview.appid;
+                            const shown = shownApp;
+                            if (held) for (const fn of shownListeners) setTimeout(() => fn(shown), 0);
+                        }
+                        if (needsInfo && held) apply(overview.appid, true);
+                        return raw;
+                    }
                     if (label === "bar" && shownApp !== unsigned(overview.appid)) {
                         shownApp = unsigned(overview.appid);
                         const shown = shownApp;
@@ -473,7 +486,8 @@ function patchOverviewChanges(tries = 0): void {
     owner.__jm_overviews = true;
     afterPatch(owner, "OnAppOverviewChange", (args: unknown[], ret: unknown) => {
         try {
-            const changed = (Array.isArray(args[0]) ? args[0] : []).map((app: any) => ours(app)).filter((id): id is number => id !== undefined);
+            const held = (app: any): number | undefined => (typeof app?.appid === "number" && infos.has(unsigned(app.appid)) ? unsigned(app.appid) : undefined);
+            const changed = (Array.isArray(args[0]) ? args[0] : []).map(held).filter((id): id is number => id !== undefined);
             // Off Steam's own stack, so a write never lands inside the change it reacts to.
             if (changed.length > 0) setTimeout(() => changed.forEach((id) => apply(id)), 0);
         } catch (err) {
@@ -578,7 +592,7 @@ export function installGameInfo(opts: { all: Record<string, Info>; showByDefault
     note = opts.note;
     for (const [key, info] of Object.entries(opts.all)) {
         const id = Number(key);
-        if (Number.isFinite(id) && isShortcut(id)) infos.set(unsigned(id), info);
+        if (Number.isFinite(id) && id !== 0) infos.set(unsigned(id), info);
     }
     let tries = 0;
     const attempt = () => {

@@ -68,17 +68,53 @@ local function row(appid, name, rec)
     status = M.status(rec),
     match = match and { source = match.source, id = match.id, name = match.name } or nil,
     edited = rec ~= nil and rec.custom ~= nil and (rec.info == nil or not same(clean(rec.custom), clean(rec.info))),
+    steam = rec ~= nil and type(rec.steam) == "table" or nil,
   }
 end
 
--- The list: one row per game the frontend names.
+-- The list: one row per game the frontend names, then the purchased games the user added.
 function M.list(named)
-  local out = {}
+  local out, listed = {}, {}
   for _, g in ipairs(type(named) == "table" and named or {}) do
     local appid = type(g) == "table" and state.appid(g.appid)
-    if appid then out[#out + 1] = row(appid, text(g.name), state.peek(appid)) end
+    if appid and not listed[appid] then
+      listed[appid] = true
+      out[#out + 1] = row(appid, text(g.name), state.peek(appid))
+    end
   end
+  local added = {}
+  for key, rec in pairs(state.games()) do
+    local appid = type(rec) == "table" and type(rec.steam) == "table" and state.steam_appid(key)
+    if appid and not listed[appid] then added[#added + 1] = { appid = appid, name = text(rec.steam.name) } end
+  end
+  table.sort(added, function(a, b) return a.appid < b.appid end)
+  for _, g in ipairs(added) do out[#out + 1] = row(g.appid, g.name, state.peek(g.appid)) end
   return out
+end
+
+-- Adds a purchased Steam game to the list and takes its own Game Info from Steam; nothing on its page changes until the user edits it.
+function M.add_steam(appid, name)
+  local n = state.steam_appid(appid)
+  local title = text(name):match("^%s*(.-)%s*$")
+  if not n or title == "" then return { error = "bad-game" } end
+  local key = string.format("%d", n)
+  local list = state.games()
+  if type(list[key]) ~= "table" then list[key] = {} end
+  list[key].steam = { name = title }
+  state.save()
+  log.line("match", key .. ": purchased game added")
+  local matched = M.match(n, "steam", n)
+  return { ok = true, appid = n, error = matched.error }
+end
+
+-- Takes a purchased game out of the list again with everything the plugin kept about it.
+function M.remove_steam(appid)
+  local rec = state.peek(appid)
+  if not rec or type(rec.steam) ~= "table" then return { error = "bad-game" } end
+  state.games()[state.key(appid)] = nil
+  state.save()
+  log.line("match", string.format("%d: purchased game removed", appid))
+  return { ok = true }
 end
 
 -- Letters and digits only, lower case, single spaces.
@@ -108,7 +144,7 @@ function M.search(term, only)
     return out
   end
   for _, id in ipairs(sources.order()) do
-    if sources.MATCHABLE[id] and sources.in_use(id) and (only == nil or only == id) then
+    if sources.MATCHABLE[id] and sources.gives(id, "info") and (only == nil or only == id) then
       out.none = false
       local ok, found, err = pcall(sources.get(id).search, term)
       if not ok or not found then

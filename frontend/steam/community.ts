@@ -143,6 +143,47 @@ export async function toFeed(appid: number, list: MediaItem[]): Promise<{ feed: 
     return { feed, measured: lacking.length > 0 };
 }
 
+/** How Steam's own community feed joins the plugin's cards on a purchased game's page: not at all, or after them. */
+export type Native = "first" | "after" | "off";
+const natives = new Map<number, Native>();
+
+/** Does the plugin answer Steam's loader for this game: a non-Steam game with cards, or a purchased one whose cards come before Steam's own feed. */
+function feeding(appid: unknown): boolean {
+    if (typeof appid !== "number") return false;
+    const id = unsigned(appid);
+    if ((feeds.get(id)?.length ?? 0) === 0) return false;
+    return isShortcut(appid) || (natives.get(id) ?? "first") !== "first";
+}
+
+/** The mounted Community sections, held weakly: a purchased game's is given a new loader when its cards change. */
+const sections = new Set<WeakRef<any>>();
+
+/** Starts a purchased game's section over, so it asks for its first page again. */
+function restart(id: number): void {
+    for (const ref of [...sections]) {
+        const section = ref.deref();
+        if (!section) {
+            sections.delete(ref);
+            continue;
+        }
+        try {
+            const old = section.m_loader;
+            if (!old || typeof section.props?.appid !== "number" || unsigned(section.props.appid) !== id) continue;
+            old.CancelRequests?.();
+            const fresh = new old.constructor(section.props.appid);
+            fresh.__jm_section = section;
+            const el: HTMLElement | undefined = section.m_elInnerContainer;
+            section.m_loader = fresh;
+            if (el) fresh.OnBind?.(el.querySelector('[role="row"]')?.clientWidth || el.clientWidth);
+            section.forceUpdate?.();
+            // With no cards of the plugin's to put first, Steam's own feed is asked for at once.
+            if (!feeding(section.props.appid)) fresh.LoadAdditionalContent?.();
+        } catch (err) {
+            report("community restart", err);
+        }
+    }
+}
+
 /** Does the game have cards to show; its page then gets Steam's Community section. */
 export function hasFeed(appid: number): boolean {
     return (feeds.get(unsigned(appid))?.length ?? 0) > 0;
@@ -154,12 +195,17 @@ export function knows(appid: number): boolean {
 }
 
 /** What a game has, or nothing; its cards are made when its page is shown. */
-export function setMedia(appid: number, list: readonly MediaItem[] | undefined): void {
+export function setMedia(appid: number, list: readonly MediaItem[] | undefined, native?: Native): void {
     const id = unsigned(appid);
+    const fed = feeding(appid);
     for (const card of feeds.get(id) ?? []) viewers.delete(card.full_image_url);
     feeds.delete(id);
     if (list) items.set(id, [...list]);
     else items.delete(id);
+    if (list && native && !isShortcut(appid)) natives.set(id, native);
+    else natives.delete(id);
+    // A purchased game whose page showed the plugin's cards goes back to Steam's own feed until new ones are made.
+    if (fed && !isShortcut(appid)) restart(id);
 }
 
 /** Forgets every game's media, for when the sources that feed the pages changed. */
@@ -200,7 +246,7 @@ function widthOnScreen(el: HTMLElement): number {
 function settle(loader: any): void {
     try {
         const el = gridOf(loader);
-        if (!el || !isShortcut(loader.m_unAppID)) return;
+        if (!el || !feeding(loader.m_unAppID)) return;
         const width = widthOnScreen(el);
         if (!(width > 0) || width === loader.m_nWidth) return;
         const before = loader.m_nWidth;
@@ -244,6 +290,8 @@ export async function showMedia(appid: number): Promise<void> {
         note(`community: ${feed.length} card(s) for ${id}`);
         if (measured) sized(id, list.map((item) => [item.width ?? 0, item.height ?? 0]));
         if (feed.length > 0) changed();
+        // A purchased game's section is already on its page with Steam's own feed: it starts over with the plugin's cards first.
+        if (feed.length > 0 && !isShortcut(appid) && feeding(appid)) restart(id);
     } catch (err) {
         report("community feed", err);
     } finally {
@@ -251,14 +299,17 @@ export async function showMedia(appid: number): Promise<void> {
     }
 }
 
-/** What the loader answers for one of our games: the whole list as page 1, nothing after; undefined lets Steam's own loader run. */
-function answerFor(rawAppid: unknown, page: unknown): { vecContent: FeedItem[]; mapVotes: Map<string, unknown> } | undefined {
-    if (!isShortcut(rawAppid)) return undefined;
-    const feed = feeds.get(unsigned(rawAppid));
-    if (!feed || feed.length === 0) return undefined;
+/**
+ * What the loader answers for one of our games: the whole list as page 1 and nothing after; undefined lets Steam's own loader run.
+ * "steam" is for a purchased game whose own feed follows the plugin's cards: Steam is asked for its page before.
+ */
+function answerFor(rawAppid: unknown, page: unknown): { vecContent: FeedItem[]; mapVotes: Map<string, unknown> } | "steam" | undefined {
+    if (!feeding(rawAppid)) return undefined;
+    const id = unsigned(rawAppid as number);
+    if (Number(page) > 1) return !isShortcut(rawAppid) && natives.get(id) === "after" ? "steam" : { vecContent: [], mapVotes: new Map() };
     // A fresh copy each time: Steam's cards write into what they are given.
-    const copy = feed.map((item) => ({ ...item, content_descriptorids: [], reactions: [], creator: { ...item.creator } }));
-    return { vecContent: Number(page) <= 1 ? copy : [], mapVotes: new Map() };
+    const copy = (feeds.get(id) ?? []).map((item) => ({ ...item, content_descriptorids: [], reactions: [], creator: { ...item.creator } }));
+    return { vecContent: copy, mapVotes: new Map() };
 }
 
 let loaderPatched = false;
@@ -275,13 +326,15 @@ function patchLoader(section: any): void {
         return;
     }
 
-    replacePatch(proto, "LoadCommunityContentAndVotes", function (this: any, args: unknown[]): any {
+    const loading = replacePatch(proto, "LoadCommunityContentAndVotes", function (this: any, args: unknown[]): any {
         try {
             const answer = answerFor(args[0], args[1]);
             if (answer && Number(args[1]) <= 1) {
                 settleSoon(this);
                 setTimeout(() => describe(this), 3000);
             }
+            // The plugin's cards took the first page, so Steam's own first page is the loader's second.
+            if (answer === "steam") return (loading as unknown as { original: (...a: unknown[]) => unknown }).original.call(this, args[0], Number(args[1]) - 1);
             return answer ? Promise.resolve(answer) : callOriginal;
         } catch (err) {
             report("community loader", err);
@@ -294,14 +347,14 @@ function patchLoader(section: any): void {
         proto.BuildRowsForCards = function (this: any, cards: any[]): any {
             const all = Array.isArray(cards) ? cards.slice() : [];
             try {
-                if (isShortcut(this.m_unAppID)) evenTrailers(this.m_vecCards, all);
+                if (feeding(this.m_unAppID)) evenTrailers(this.m_vecCards, all);
             } catch (err) {
                 report("community trailers", err);
             }
             const rows = build.call(this, cards);
             try {
                 const single = this.m_vecRowTemplates?.[0];
-                if (!single || !Array.isArray(rows) || !isShortcut(this.m_unAppID)) return rows;
+                if (!single || !Array.isArray(rows) || !feeding(this.m_unAppID)) return rows;
                 const placed = new Set<unknown>();
                 for (const row of rows) for (const cell of row?.vecItems ?? []) placed.add(cell);
                 const columns = Number(single.nColumns) || 1;
@@ -330,7 +383,7 @@ function patchLoader(section: any): void {
     // Steam's own two triggers for the first page can both miss on a busy page; ours needs no network, so it loads as soon as the loader is bound.
     const loadFirst = function (this: any, _args: unknown[], ret: unknown): unknown {
         try {
-            if (this.m_nNextPage === 1 && this.m_bHasEmptyRows === true && isShortcut(this.m_unAppID) && hasFeed(this.m_unAppID)) this.LoadAdditionalContent?.();
+            if (this.m_nNextPage === 1 && this.m_bHasEmptyRows === true && feeding(this.m_unAppID)) this.LoadAdditionalContent?.();
         } catch (err) {
             report("community first page", err);
         }
@@ -341,7 +394,7 @@ function patchLoader(section: any): void {
         afterPatch(proto, "OnResize", function (this: any, args: unknown[], ret: unknown): unknown {
             // Steam hands over the section's width and lays the rows out for it half a second later: it is given the rows' width instead.
             try {
-                const el = isShortcut(this.m_unAppID) ? gridOf(this) : undefined;
+                const el = feeding(this.m_unAppID) ? gridOf(this) : undefined;
                 const width = el ? widthOnScreen(el) : 0;
                 if (width > 0) this.m_nWidth = width;
             } catch (err) {
@@ -357,6 +410,7 @@ function patchLoader(section: any): void {
         const ret = typeof mount === "function" ? mount.apply(this, rest) : undefined;
         try {
             if (this.m_loader) this.m_loader.__jm_section = this;
+            sections.add(new WeakRef(this));
         } catch (err) {
             report("community mount", err);
         }

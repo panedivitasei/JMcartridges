@@ -47,7 +47,11 @@ end
 method("JmState", function()
   local list = {}
   for _, id in ipairs(sources.order()) do
-    list[#list + 1] = { id = id, on = sources.on(id), signed = sources.signed(id), needs = sources.get(id).needs, matchable = sources.MATCHABLE[id] == true, media = media.wanted(id) }
+    local parts = {}
+    for _, part in ipairs(sources.PARTS) do
+      if sources.GIVES[id] and sources.GIVES[id][part] then parts[part] = sources.wants(id, part) end
+    end
+    list[#list + 1] = { id = id, on = sources.on(id), signed = sources.signed(id), needs = sources.get(id).needs, matchable = sources.MATCHABLE[id] == true, media = media.wanted(id), parts = parts }
   end
   local prefs = state.prefs()
   return { prefs = { theme = prefs.theme, show_info = prefs.show_info, achievements = prefs.achievements, desc_limit = prefs.desc_limit, opened = prefs.opened }, sources = list }
@@ -58,12 +62,14 @@ method("JmSetPrefs", function(d)
   -- The switches have a call of their own.
   change.off = nil
   change.media_off = nil
+  change.parts_off = nil
   -- A whole number of characters, 0 for no limit.
   if type(change.desc_limit) == "number" then change.desc_limit = math.max(0, math.min(100000, math.floor(change.desc_limit))) end
   state.set_prefs(change)
 end)
 
 method("JmSetSource", function(d) sources.set_on(d.id, d.on == true) end)
+method("JmSetPart", function(d) sources.set_part(d.id, d.part, d.on == true) end)
 method("JmSignIn", function(d) return { ok = sources.sign_in(d.id, d.credentials) } end)
 method("JmSetAccount", function(d) paths.set_account(d.account) end)
 
@@ -71,6 +77,8 @@ method("JmGames", function(d) return { games = games.list(d.games) } end)
 method("JmSearch", function(d) return games.search(d.term, type(d.source) == "string" and d.source or nil) end)
 method("JmMatch", function(d) return games.match(d.appid, d.source, d.id) end)
 method("JmUnmatch", function(d) return games.unmatch(d.appid) end)
+method("JmAddSteam", function(d) return games.add_steam(d.steam, d.name) end)
+method("JmRemoveSteam", function(d) return games.remove_steam(d.appid) end)
 method("JmSetState", function(d) return games.set_state(d.appid, d.state) end)
 method("JmInfo", function(d) return games.info(d.appid) end)
 method("JmSaveInfo", function(d) return games.save_info(d.appid, d.info) end)

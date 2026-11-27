@@ -49,6 +49,7 @@ export const TEXT = {
     change: "Change",
     reset: "Reset",
     remove: "Remove",
+    addGame: "Add Game",
 
     matchTitle: "Match",
     matchSteam: "Steam",
@@ -99,6 +100,7 @@ export const TEXT = {
     advanced: "Advanced settings",
     showInfo: "Show Game Info",
     showAchievements: "Show Achievements",
+    achievements: "Achievements",
     communityContent: "Community content",
     descLimit: "Description character limit",
 

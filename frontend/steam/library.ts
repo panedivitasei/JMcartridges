@@ -38,6 +38,38 @@ export function listGames(): { appid: number; name: string }[] {
     }
 }
 
+/** Every purchased game in the library, by name. */
+export function listSteamGames(): { appid: number; name: string }[] {
+    try {
+        const apps = (steam().appStore?.allApps ?? []) as (Overview & { app_type?: number })[];
+        return apps
+            .filter((a) => typeof a?.appid === "number" && a.appid > 0 && !isShortcut(a.appid) && a.app_type === 1 && !!a.display_name)
+            .map((a) => ({ appid: a.appid, name: String(a.display_name) }))
+            .sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+        return [];
+    }
+}
+
+/** The picture Steam itself shows in a slot of a purchased game: its cached copy when it has one, else the one on Steam's servers. */
+export function steamArt(appid: number, slot: string): string | undefined {
+    try {
+        const stores = steam() as unknown as { appStore?: Record<string, (o: unknown) => unknown>; appDetailsStore?: Record<string, (o: unknown) => unknown> };
+        const overview = steam().appStore?.GetAppOverviewByAppID?.(appid);
+        if (!overview) return undefined;
+        const first = (list: unknown) => (Array.isArray(list) ? list.find((u): u is string => typeof u === "string" && u !== "") : typeof list === "string" && list ? list : undefined);
+        const app = stores.appStore;
+        const details = stores.appDetailsStore;
+        if (slot === "portrait") return first(app?.GetCachedVerticalCapsuleURL?.(overview)) ?? first(app?.GetVerticalCapsuleURLForApp?.(overview));
+        if (slot === "wide") return first(details?.GetHeaderImages?.(overview));
+        if (slot === "hero") return first((details?.GetHeroImages?.(overview) as { rgHeroImages?: unknown } | undefined)?.rgHeroImages);
+        if (slot === "logo") return first((details?.GetLogoImages?.(overview) as { rgLogoImages?: unknown } | undefined)?.rgLogoImages);
+    } catch {
+        /* no picture is shown */
+    }
+    return undefined;
+}
+
 export function steamApps(): SteamApps | undefined {
     return steam().SteamClient?.Apps;
 }

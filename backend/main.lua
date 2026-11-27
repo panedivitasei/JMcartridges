@@ -3,6 +3,9 @@
 -- Compiled traces crash Millennium's 64-bit Lua host at the C boundary, so the interpreter runs everything.
 if jit and jit.off then jit.off() end
 
+-- Changed with every build that is handed out.
+local BUILD = "0.1.1"
+
 local millennium = require("millennium")
 local log = require("log")
 local paths = require("paths")
@@ -18,7 +21,9 @@ end
 local function on_frontend_loaded()
   pcall(function()
     local ok, version = pcall(millennium.version)
-    log.line("start", string.format("millennium=%s steam=%s user=%s", tostring(ok and version or "unknown"), tostring(paths.steam()), paths.user() and "found" or "not found"))
+    -- The build and the folder it runs from are named, so a log says which copy of the plugin wrote it.
+    local from = tostring(debug.getinfo(1, "S").source):gsub("^@", ""):gsub("[\\/]backend[\\/][^\\/]*$", "")
+    log.line("start", string.format("build=%s millennium=%s steam=%s user=%s from=%s", BUILD, tostring(ok and version or "unknown"), tostring(paths.steam()), paths.user() and "found" or "not found", from))
   end)
 end
 

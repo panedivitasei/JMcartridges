@@ -1,7 +1,6 @@
 // The Options card: the window's theme, and the settings few people change.
 import type { Host } from "./host.ts";
-import type { Source, State } from "./model.ts";
-import { SOURCE_NAME } from "./sources.tsx";
+import type { State } from "./model.ts";
 import { TEXT } from "./text.ts";
 import { Button, Check, Overlay, Section, Segments, TextInput } from "./widgets.tsx";
 
@@ -27,10 +26,6 @@ export function Options({ host, state, onState, onClose }: { host: Host; state: 
         if (descLimit === state.prefs.descLimit) return;
         onState({ ...state, prefs: { ...state.prefs, descLimit } });
         await host.setDescLimit(descLimit).catch(() => undefined);
-    };
-    const media = async (source: Source, on: boolean) => {
-        onState({ ...state, sources: state.sources.map((s) => (s.id === source.id ? { ...s, media: on } : s)) });
-        await host.setMediaSource(source.id, on).catch(() => undefined);
     };
 
     return (
@@ -67,14 +62,6 @@ export function Options({ host, state, onState, onClose }: { host: Host; state: 
                 <div className="jm-opt-row">
                     <span className="jm-opt-name">{TEXT.descLimit}</span>
                     <TextInput className="jm-short" value={state.prefs.descLimit > 0 ? String(state.prefs.descLimit) : ""} onChange={(typed) => void limit(typed)} />
-                </div>
-                <div className="jm-opt-row">
-                    <span className="jm-opt-name">{TEXT.communityContent}</span>
-                    {state.sources
-                        .filter((s) => s.matchable)
-                        .map((s) => (
-                            <Check key={s.id} on={s.media} label={SOURCE_NAME[s.id]} onChange={(on) => void media(s, on)} />
-                        ))}
                 </div>
             </Section>
         </Overlay>

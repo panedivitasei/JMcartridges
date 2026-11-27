@@ -192,6 +192,13 @@ export function GameEditor({
             onChanged();
         });
 
+    const removeGame = () =>
+        act(async (_token, shown) => {
+            const res = await host.removeSteam(appid);
+            if (res.error && shown()) setNote({ ok: false, text: errorText("unknown") });
+            onChanged();
+        });
+
     const unlink = () =>
         act(async (token, shown) => {
             const res = await host.unlink(appid);
@@ -305,7 +312,7 @@ export function GameEditor({
                     <div className="jm-col">
                         <Section title={TEXT.artTitle}>
                             <div className="jm-art">
-                                {ART_SLOTS.map((slot) => (
+                                {ART_SLOTS.filter((slot) => !(row.steam && slot === "icon")).map((slot) => (
                                     <div key={slot} className="jm-tile" style={{ width: TILE_WIDTH[slot] }}>
                                         <button
                                             type="button"
@@ -362,7 +369,11 @@ export function GameEditor({
                                 )}
                                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.match?.name ?? ""}</span>
                                 <span className="jm-grow" />
-                                {status === "excluded" ? (
+                                {row.steam ? (
+                                    <LinkButton disabled={off} onClick={() => void removeGame()}>
+                                        {TEXT.remove}
+                                    </LinkButton>
+                                ) : status === "excluded" ? (
                                     <LinkButton disabled={off} onClick={() => void include()}>
                                         {TEXT.include}
                                     </LinkButton>
@@ -371,7 +382,7 @@ export function GameEditor({
                                         {TEXT.leaveAlone}
                                     </LinkButton>
                                 )}
-                                {row.match && (
+                                {row.match && !row.steam && (
                                     <LinkButton disabled={off} onClick={() => void unlink()}>
                                         {TEXT.unlink}
                                     </LinkButton>

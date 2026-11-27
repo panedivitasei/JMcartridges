@@ -1,7 +1,7 @@
 // The Sources card: each source's switch and sign-in, in the order they are asked; a source is dragged by its grip.
 import { useEffect, useRef, useState, type PointerEvent as GripEvent } from "react";
 import type { Host } from "./host.ts";
-import { FIXED_SOURCE, inUse, moveSource, type SourceId, type State } from "./model.ts";
+import { inUse, moveSource, PARTS, type Part, type SourceId, type State } from "./model.ts";
 import { TEXT } from "./text.ts";
 import { Button, Check, Field, Overlay, TextInput } from "./widgets.tsx";
 
@@ -26,6 +26,13 @@ const FIELD: Record<string, string> = {
 
 /** Fields that are no secret and show what is typed. */
 const PLAIN = new Set(["ra_user"]);
+
+const PART_NAME: Record<Part, string> = {
+    info: TEXT.infoTitle,
+    art: TEXT.artTitle,
+    media: TEXT.communityContent,
+    achievements: TEXT.achievements,
+};
 
 /** Shown in the fields of a saved sign-in; the page is never told the saved value or its length. */
 const MASK = "•".repeat(10);
@@ -52,6 +59,12 @@ export function Sources({ host, state, onState, onClose }: { host: Host; state: 
 
     const toggle = async (id: SourceId, on: boolean) => {
         await host.setSource(id, on).catch(() => undefined);
+        await reread();
+    };
+
+    const part = async (id: SourceId, name: Part, on: boolean) => {
+        onState({ ...state, sources: state.sources.map((s) => (s.id === id ? { ...s, parts: { ...s.parts, [name]: on } } : s)) });
+        await host.setPart(id, name, on).catch(() => undefined);
         await reread();
     };
 
@@ -156,10 +169,15 @@ export function Sources({ host, state, onState, onClose }: { host: Host; state: 
                     >
                         <div className="jm-source">
                             <span className="jm-source-name">
-                                {id === FIXED_SOURCE ? <span className="jm-grip jm-fixed" /> : <span className="jm-grip" onPointerDown={(e) => grab(e, id)} />}
+                                <span className="jm-grip" onPointerDown={(e) => grab(e, id)} />
                                 <Check on={on} disabled={!saved || busy} label={NAME[id]} onChange={(next) => void toggle(id, next)} />
                             </span>
                             <span className={on ? "jm-ok" : "jm-muted"}>{on ? TEXT.sourceOn : saved ? "" : TEXT.keyMissing}</span>
+                        </div>
+                        <div className="jm-parts">
+                            {PARTS.filter((name) => source.parts[name] !== undefined).map((name) => (
+                                <Check key={name} on={on && source.parts[name] === true} disabled={!on || busy} label={PART_NAME[name]} onChange={(next) => void part(id, name, next)} />
+                            ))}
                         </div>
                         {source.needs.length > 0 && (
                             <div className="jm-form">

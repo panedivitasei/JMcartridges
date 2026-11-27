@@ -107,6 +107,8 @@ html.jm-popup .title-area .title-bar-actions{pointer-events:auto}
 .jm-chip.jm-ask{background:var(--ink-fill);border-color:var(--ink);color:var(--on-ink)}
 
 .jm-list .jm-card-body{padding:0}
+.jm-parts{display:flex;flex-wrap:wrap;gap:4px 18px;margin:6px 0 4px 24px}
+.jm-add-list{margin-top:10px;max-height:340px;overflow-y:auto;border:1px solid var(--line)}
 .jm-game{display:flex;align-items:center;gap:10px;width:100%;padding:8px 12px;border:0;border-bottom:1px solid var(--line);border-left:3px solid transparent;background:transparent;color:var(--text);
   font:inherit;text-align:left;cursor:pointer;outline:none;margin:0;border-radius:0}
 .jm-game:hover{background:var(--hover)}
@@ -185,7 +187,6 @@ html.jm-popup .title-area .title-bar-actions{pointer-events:auto}
 .jm-source-name{display:flex;align-items:center;gap:10px;min-width:0}
 /* Grip a source is dragged by, drawn as three short lines. */
 .jm-grip{flex:0 0 14px;width:14px;height:14px;cursor:grab;touch-action:none;opacity:.55;background:linear-gradient(var(--body),var(--body)) 0 2px/100% 2px no-repeat,linear-gradient(var(--body),var(--body)) 0 6px/100% 2px no-repeat,linear-gradient(var(--body),var(--body)) 0 10px/100% 2px no-repeat}
-.jm-grip.jm-fixed{visibility:hidden;cursor:default}
 .jm-grip:hover,.jm-held .jm-grip{opacity:1}
 .jm-held .jm-grip{cursor:grabbing}
 .jm-source-block .jm-form{margin:10px 0 0}

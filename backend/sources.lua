@@ -6,9 +6,19 @@ local state = require("state")
 
 local M = {}
 
--- The order of an install that never changed it; Steam always stays first.
+-- The order of an install that never changed it.
 M.LIST = { "steam", "igdb", "thegamesdb", "steamgriddb", "retroachievements" }
 M.MATCHABLE = { steam = true, igdb = true, thegamesdb = true }
+
+-- The parts a source can give: Game Info, artwork, Community content, achievements.
+M.PARTS = { "info", "art", "media", "achievements" }
+M.GIVES = {
+  steam = { info = true, art = true, media = true },
+  igdb = { info = true, art = true, media = true },
+  thegamesdb = { info = true, art = true, media = true },
+  steamgriddb = { art = true },
+  retroachievements = { achievements = true },
+}
 
 local MODULES = { steam = "src_steam", igdb = "src_igdb", thegamesdb = "src_tgdb", steamgriddb = "src_sgdb", retroachievements = "src_ra" }
 
@@ -25,7 +35,6 @@ function M.order()
       out[#out + 1] = id
     end
   end
-  add("steam")
   for id in tostring(state.prefs().source_order):gmatch("[^,%s]+") do add(id) end
   for _, id in ipairs(M.LIST) do add(id) end
   return out
@@ -53,6 +62,37 @@ function M.set_on(id, on)
   log.line("sources", id .. (on and " on" or " off"))
 end
 
+-- Does the user want this part of a source: the source gives it and it is not switched off.
+function M.wants(id, part)
+  if not (M.GIVES[id] and M.GIVES[id][part]) then return false end
+  local prefs = state.prefs()
+  -- Community content had a switch of its own before every part did.
+  if part == "media" and prefs.media_off[id] == true then return false end
+  local off = prefs.parts_off[id]
+  return not (type(off) == "table" and off[part] == true)
+end
+
+-- Is this part of a source asked for now: the source in use and the part wanted.
+function M.gives(id, part)
+  return M.in_use(id) and M.wants(id, part)
+end
+
+function M.set_part(id, part, on)
+  if not (M.GIVES[id] and M.GIVES[id][part]) then return end
+  local prefs = state.prefs()
+  local off = prefs.parts_off
+  local mine = type(off[id]) == "table" and off[id] or {}
+  mine[part] = (not on) and true or nil
+  off[id] = next(mine) ~= nil and mine or nil
+  local change = { parts_off = off }
+  if part == "media" then
+    prefs.media_off[id] = nil
+    change.media_off = prefs.media_off
+  end
+  state.set_prefs(change)
+  log.line("sources", string.format("%s %s %s", id, part, on and "on" or "off"))
+end
+
 -- Asks the source whether it takes the sign-in: taken, it is saved and the source turned on; otherwise nothing is kept.
 function M.sign_in(id, creds)
   local src = M.get(id)
@@ -77,7 +117,7 @@ end
 function M.signature()
   local out = {}
   for _, id in ipairs(M.order()) do
-    if M.in_use(id) and type(M.get(id).art) == "function" then out[#out + 1] = id end
+    if M.gives(id, "art") and type(M.get(id).art) == "function" then out[#out + 1] = id end
   end
   return table.concat(out, ",")
 end

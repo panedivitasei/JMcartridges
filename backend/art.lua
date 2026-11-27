@@ -394,7 +394,7 @@ function M.options(appid, slot, name, term)
   local out = { options = {}, needs_key = false }
   for _, id in ipairs(sources.order()) do
     if id == "steamgriddb" and not sources.signed(id) then out.needs_key = true end
-    if sources.in_use(id) and type(sources.get(id).art) == "function" then
+    if sources.gives(id, "art") and type(sources.get(id).art) == "function" then
       local ref = { title = searching and term or name }
       if not searching and match then
         if match.source == id then ref.id = match.id end

@@ -17,6 +17,7 @@ import {
     type Info,
     type MatchSource,
     type Row,
+    type Part,
     type SourceId,
     type State,
 } from "./model.ts";
@@ -84,8 +85,8 @@ export interface Host {
     setAchievements(on: boolean): Promise<void>;
     /** How many characters of a description a game's page shows; 0 shows all of it. */
     setDescLimit(limit: number): Promise<void>;
-    /** Whether a source's trailers, artwork and screenshots go on the games' pages. */
-    setMediaSource(id: string, on: boolean): Promise<void>;
+    /** Whether one part of what a source gives is used. */
+    setPart(id: SourceId, part: Part, on: boolean): Promise<void>;
     /** True once, on an install nobody has opened yet. */
     firstRun(): Promise<boolean>;
     setSourceOrder(order: readonly SourceId[]): Promise<void>;
@@ -105,6 +106,12 @@ export interface Host {
     useMatch(appid: number, candidate: Pick<Candidate, "source" | "id">): Promise<{ error?: string }>;
     /** Takes the match, its info and the pictures that came with it away; the game is left as "no match". */
     unlink(appid: number): Promise<{ error?: string }>;
+    /** The purchased Steam games that are not in the list yet, by name. */
+    steamGames(): { appid: number; name: string }[];
+    /** Puts a purchased game in the list with Steam's own info; its page stays as it is until the user changes something. */
+    addSteam(game: { appid: number; name: string }): Promise<{ error?: string }>;
+    /** Takes a purchased game out of the list: Steam's own info and pictures show again. */
+    removeSteam(appid: number): Promise<{ error?: string }>;
     artState(appid: number): Promise<Record<ArtSlot, ArtSlotState>>;
     /** A slot's picture as a data: URL, or undefined when it is empty. */
     artImage(appid: number, slot: ArtSlot, stamp?: string): Promise<string | undefined>;
@@ -132,6 +139,10 @@ export interface HostDeps {
     call<R>(name: string, payload?: object): Promise<R>;
     /** The non-Steam games, as Steam lists them. */
     games(): { appid: number; name: string }[];
+    /** The user's purchased Steam games. */
+    steamGames?(): { appid: number; name: string }[];
+    /** The picture Steam itself shows in a slot of a purchased game. */
+    steamArt?(appid: number, slot: ArtSlot): string | undefined;
     steamApps(): SteamApps | undefined;
     /** A custom logo needs a position or Steam does not draw it. */
     logo?: { ensure(appid: number): Promise<void>; clear(appid: number): Promise<void> };
@@ -238,10 +249,16 @@ export function createHost(deps: HostDeps): Host {
         return readState(await deps.call("JmState"));
     }
 
+    /** The purchased games in the list: Steam's own pictures stand in for theirs, and none is fetched unasked. */
+    const steamIds = new Set<number>();
+
     async function scan(): Promise<{ games: Row[]; error?: string }> {
         try {
             const res = await deps.call<{ games?: unknown; error?: string }>("JmGames", { games: deps.games() });
-            return { games: readRows(res?.games), error: res?.error };
+            const rows = readRows(res?.games);
+            steamIds.clear();
+            for (const row of rows) if (row.steam) steamIds.add(row.appid);
+            return { games: rows, error: res?.error };
         } catch (err) {
             return { games: [], error: String((err as Error)?.message ?? err) };
         }
@@ -432,6 +449,7 @@ export function createHost(deps: HostDeps): Host {
 
     /** One game's logo: kept, set from a source, or set to "No Logo" when no source has one; true when it changed. */
     async function ensureLogo(row: Pick<Row, "appid" | "name">, force: boolean): Promise<boolean> {
+        if (steamIds.has(row.appid)) return false;
         const logo = (await artState(row.appid)).logo;
         if (logo.off) return false;
         const provisional = logo.present && logo.none === true && logo.auto === true;
@@ -479,6 +497,8 @@ export function createHost(deps: HostDeps): Host {
 
         async setSourceOrder(order) {
             await deps.call("JmSetPrefs", { prefs: { source_order: order.join(",") } });
+            // The order decides whose cards come first on a game's page.
+            deps.mediaChanged?.();
         },
 
         async setSource(id, on) {
@@ -497,9 +517,10 @@ export function createHost(deps: HostDeps): Host {
             deps.descLimitChanged?.(limit);
         },
 
-        async setMediaSource(id, on) {
-            await deps.call("JmSetMedia", { id, on });
-            deps.mediaChanged?.();
+        async setPart(id, part, on) {
+            await deps.call("JmSetPart", { id, part, on });
+            if (part === "media") deps.mediaChanged?.();
+            if (part === "achievements") deps.achievementsChanged?.();
         },
 
         async signIn(id, credentials) {
@@ -520,7 +541,7 @@ export function createHost(deps: HostDeps): Host {
                 if (first.error) return { games, error: first.error };
                 games = first.games;
                 const order = matchSources(await state());
-                const todo = games.filter((g) => g.status !== "excluded");
+                const todo = games.filter((g) => g.status !== "excluded" && !g.steam);
                 let done = 0;
                 onProgress({ phase: "finding", done, total: todo.length });
                 for (const row of todo) {
@@ -593,6 +614,37 @@ export function createHost(deps: HostDeps): Host {
             return {};
         },
 
+        steamGames() {
+            return (deps.steamGames?.() ?? []).filter((g) => !steamIds.has(g.appid));
+        },
+
+        async addSteam(game) {
+            const res = await deps.call<{ ok?: boolean; error?: string }>("JmAddSteam", { steam: game.appid, name: game.name }).catch(() => undefined);
+            if (!res?.ok) return { error: res?.error ?? "unknown" };
+            steamIds.add(game.appid);
+            await publish(game.appid);
+            return {};
+        },
+
+        async removeSteam(appid) {
+            try {
+                // Every picture set through the plugin goes back to Steam's own before the game leaves the list.
+                const slots = await artState(appid).catch(() => undefined);
+                for (const slot of ["portrait", "hero", "logo", "wide"] as const) {
+                    if (!slots?.[slot].chosen) continue;
+                    const res = await resetArt(appid, slot, true);
+                    if (res.error) log(`remove ${appid}: ${slot} not reset (${res.error})`);
+                }
+                const res = await deps.call<{ error?: string }>("JmRemoveSteam", { appid });
+                steamIds.delete(appid);
+                asked.delete(appid);
+                deps.infoChanged?.(appid, undefined);
+                return { error: res?.error };
+            } catch (err) {
+                return { error: String((err as Error)?.message ?? err) };
+            }
+        },
+
         async unlink(appid) {
             try {
                 const ours = await deps.call<{ slots?: unknown }>("JmArtFromMatch", { appid });
@@ -616,7 +668,8 @@ export function createHost(deps: HostDeps): Host {
             const kept = stamp ? pictures.get(key) : undefined;
             if (kept) return kept;
             const res = await readImage("JmArtRead", { appid, slot });
-            const image = res?.base64 && res.ext ? dataUrl(res.base64, res.ext) : undefined;
+            // A purchased game with no picture of the user's in a slot shows Steam's own there.
+            const image = res?.base64 && res.ext ? dataUrl(res.base64, res.ext) : steamIds.has(appid) ? deps.steamArt?.(appid, slot) : undefined;
             if (image && stamp) {
                 if (pictures.size >= KEPT_PICTURES) pictures.delete(pictures.keys().next().value!);
                 pictures.set(key, image);
@@ -632,7 +685,7 @@ export function createHost(deps: HostDeps): Host {
                 const kept = known[String(row.appid)];
                 if (kept?.base64) onThumb(row.appid, dataUrl(kept.base64, "jpg"));
                 else if (kept?.stamp || !res?.thumbs) missing.push([row.appid, kept?.stamp]);
-                else onThumb(row.appid, undefined);
+                else onThumb(row.appid, steamIds.has(row.appid) ? deps.steamArt?.(row.appid, "portrait") : undefined);
             }
             // A portrait with no small copy yet is read once, made small, and the small copy kept.
             for (const [appid, stamp] of missing) {
@@ -674,6 +727,8 @@ export function createHost(deps: HostDeps): Host {
         },
 
         async fetchArt(row, fresh, onProgress) {
+            // A purchased game keeps Steam's own pictures until the user changes one.
+            if (steamIds.has(row.appid)) return false;
             const slots = ["portrait", "hero", "wide", "logo"] as const;
             const now = await artState(row.appid);
             let changed = false;
